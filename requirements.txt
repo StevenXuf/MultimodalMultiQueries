@@ -1,0 +1,15 @@
+soundfile
+torchcodec
+packaging
+pillow
+datasets
+timm
+xformers
+torchvision
+torchmetrics
+torchaudio
+matplotlib
+fire
+PyYAML
+torch
+transformers
