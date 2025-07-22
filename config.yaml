@@ -1,0 +1,16 @@
+General:
+    BATCH_SIZE: 64
+
+WikiArt:
+    TSV_PATH: "/data/data_fxu/WikiArt-Emotions/WikiArt-info.tsv"  # Path to your TSV file
+    EMOTION_PATH: '/data/data_fxu/WikiArt-Emotions/WikiArt-Emotions-Ag4.tsv'
+    IMAGE_SIZE: 224     # Standard size for pretrained models
+
+DEAM:
+    DATASET_NAME: 'Rehead/DEAM_stripped_vocals' 
+    THRESHOLD_VALENCE: 2.0
+    THRESHOLD_AROUSAL: 2.0
+    SAMPLING_RATE: 16_000
+
+Lexicon:
+    LEXICON_PATH: '/data/data_fxu/NRC-VAD-Lexicon-v2_1/NRC-VAD-Lexicon-v2_1.txt'

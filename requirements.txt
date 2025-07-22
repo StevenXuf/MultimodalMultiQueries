@@ -1,7 +1,9 @@
+nltk
 soundfile
 torchcodec
 packaging
 pillow
+pandas
 datasets
 timm
 xformers
