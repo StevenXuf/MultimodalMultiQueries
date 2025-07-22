@@ -1,5 +1,6 @@
 General:
     BATCH_SIZE: 64
+    TOP_K: 1
 
 WikiArt:
     TSV_PATH: "/data/data_fxu/WikiArt-Emotions/WikiArt-info.tsv"  # Path to your TSV file

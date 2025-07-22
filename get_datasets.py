@@ -160,7 +160,7 @@ def get_default_config(config_path):
 
 
 
-def get_all_loaders(config='./config.yaml',BATCH_SIZE=None,TSV_PATH=None,IMAGE_SIZE=None,EMOTION_PATH=None, LEXICON_PATH=None,THRESHOLD_VALENCE=None,THRESHOLD_AROUSAL=None):
+def get_all_loaders(config='./config.yaml',BATCH_SIZE=None,TSV_PATH=None,IMAGE_SIZE=None,EMOTION_PATH=None, LEXICON_PATH=None,THRESHOLD_VALENCE=None,THRESHOLD_AROUSAL=None,TOP_K=None):
     
     cfg=get_default_config('./config.yaml')
 
@@ -178,7 +178,9 @@ def get_all_loaders(config='./config.yaml',BATCH_SIZE=None,TSV_PATH=None,IMAGE_S
         THRESHOLD_VALENCE=cfg['DEAM']['THRESHOLD_VALENCE']
     if THRESHOLD_AROUSAL is None:
         THRESHOLD_AROUSAL=cfg['DEAM']['THRESHOLD_AROUSAL']
-    
+    if TOP_K is None:
+        TOP_K=cfg['General']['TOP_K']
+
     lexicon=get_lexicon(LEXICON_PATH)
     df_emo=get_image_title_emotion(EMOTION_PATH,lexicon)
     df_main=pd.read_csv(TSV_PATH,sep='\t')
@@ -210,9 +212,14 @@ def get_all_loaders(config='./config.yaml',BATCH_SIZE=None,TSV_PATH=None,IMAGE_S
     deam_train_va=torch.cat(deam_train_va,dim=0)
     distance=pairwise_euclidean_distance(wiki_va,deam_train_va)
     
-    vals,ids=torch.topk(-distance,k=1,dim=1)
+    _,i2a_ids=torch.topk(-distance,k=TOP_K,dim=1)
+    _,a2i_ids=torch.topk(-distance.T,k=TOP_K,dim=1)
 
-    return wikiart_loader,train_loader,test_loader,ids
+    return {'wikiart':wikiart_loader,
+            'deam_train':train_loader,
+            'deam_test':test_loader,
+            'img2audio_ids':i2a_ids,
+            'audio2img_ids':a2i_ids}
 
 
 if __name__ == "__main__":
