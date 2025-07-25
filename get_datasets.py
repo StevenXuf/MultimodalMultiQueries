@@ -4,6 +4,7 @@ import requests
 import yaml
 import fire
 
+from tqdm import tqdm
 from datasets import load_dataset
 from PIL import Image
 from io import BytesIO
@@ -60,7 +61,7 @@ def get_dataloader(dataset,collate_fn,batch_size=64):
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,  # Adjust batch size as needed
-        shuffle=True,    # Optional: Shuffle for training
+        shuffle=False,    # Optional: Shuffle for training
         collate_fn=collate_fn
     )
     return dataloader
@@ -105,20 +106,24 @@ class ArtworkDataset(Dataset):
         title = str(row['Title']) if pd.notna(row['Title']) else ""
         year = str(row['Year']) if pd.notna(row['Year']) else "Unknown"
         artist = str(row['Artist']) if pd.notna(row['Artist']) else "Unknown"
-        valence=torch.tensor([row['valence']])
-        arousal=torch.tensor([row['arousal']])
+        valence_emotion=torch.tensor([row['valence_emotion']])
+        arousal_emotion=torch.tensor([row['arousal_emotion']])
+        valence_description=torch.tensor([row['valence_description']])
+        arousal_description=torch.tensor([row['arousal_description']])
 
-        return category, img, title, year, artist, valence, arousal
+        return category, img, title, year, artist, valence_emotion, arousal_emotion, valence_description, arousal_description
 
 # Custom collate function to handle text metadata
 def custom_art_collate(batch):
-    category, images, titles, years, artists, valence, arousal= zip(*batch)
+    category, images, titles, years, artists, valence_emo, arousal_emo, valence_desc, arousal_desc= zip(*batch)
 
     # Stack images into tensor
     images = torch.stack(images)
-    valence=torch.stack(valence)
-    arousal=torch.stack(arousal)
+    valence_emo=torch.stack(valence_emo)
+    arousal_emo=torch.stack(arousal_emo)
 
+    valence_desc=torch.stack(valence_desc)
+    arousal_desc=torch.stack(arousal_desc)
     # Return metadata as lists
     return {
         "category": category,
@@ -126,8 +131,10 @@ def custom_art_collate(batch):
         "titles": titles,
         "years": years,
         "artists": artists,
-        "valence": valence,
-        "arousal": arousal
+        "valence_emotion": valence_emo,
+        "arousal_emotion": arousal_emo,
+        "valence_description":valence_desc,
+        "arousal_description":arousal_desc
     }
 
 # Load and prepare data
@@ -141,12 +148,17 @@ def get_image_title_emotion(emotion_file,lexicon):
     df=pd.read_csv(emotion_file,sep='\t')
     #cols_to_keep=[col for col in df.columns if 'Art (image+title)' in col]
     #df=df[cols_to_keep] 
-    df['valence'],df['arousal']=None,None
+    df['valence_emotion'],df['arousal_emotion']=None,None
+    df['valence_description'],df['arousal_description']=None,None
 
     for idx, row in df.iterrows():
         emotions=[item.split(':')[1].strip() for item in list(row[9:69].index[row[9:69]== 1])]
-        va=get_vad(' '.join(emotions),lexicon)
-        df.at[idx,'valence'],df.at[idx,'arousal']=va['valence'],va['arousal']
+        va_emotion=get_vad(' '.join(emotions),lexicon)
+        df.at[idx,'valence_emotion'],df.at[idx,'arousal_emotion']=va_emotion['valence'],va_emotion['arousal']
+
+        description=f"The painting {row['Title']} is, a {row['Category']}, created by {row['Artist']} in {row['Year']}"
+        va_description=get_vad(description,lexicon)
+        df.at[idx,'valence_description'],df.at[idx,'arousal_description']=va_description['valence'],va_description['arousal']
     
     return df
 
@@ -157,8 +169,6 @@ def get_shared_info(df1,df2):
 def get_default_config(config_path):
     with open(config_path,'r') as f:
         return yaml.safe_load(f)
-
-
 
 def get_all_loaders(config='./config.yaml',BATCH_SIZE=None,TSV_PATH=None,IMAGE_SIZE=None,EMOTION_PATH=None, LEXICON_PATH=None,THRESHOLD_VALENCE=None,THRESHOLD_AROUSAL=None,TOP_K=None):
     
@@ -191,36 +201,42 @@ def get_all_loaders(config='./config.yaml',BATCH_SIZE=None,TSV_PATH=None,IMAGE_S
 
     train_loader,test_loader=get_deam_loaders(THRESHOLD_VALENCE,THRESHOLD_AROUSAL,BATCH_SIZE)
     
-    wiki_va=[]
-    for wiki_batch in wikiart_loader:
+    wiki_va_emo,wiki_va_desc=[],[]
+    for wiki_batch in tqdm(wikiart_loader):
         category = wiki_batch['category']
         images = wiki_batch["images"]        # Tensor shape: [B, 3, H, W]
         titles = wiki_batch["titles"]        # List of titles
         years = wiki_batch["years"]          # List of years
         artists = wiki_batch["artists"]      # List of artists
-        wiki_valence=wiki_batch['valence']
-        wiki_arousal=wiki_batch['arousal']
-        wiki_va.append(torch.cat([wiki_valence,wiki_arousal],dim=1))
-    
+        
+        wiki_valence_emo=wiki_batch['valence_emotion']
+        wiki_arousal_emo=wiki_batch['arousal_emotion']
+        wiki_va_emo.append(torch.cat([wiki_valence_emo,wiki_arousal_emo],dim=1))
+        
+        wiki_valence_desc=wiki_batch['valence_description']
+        wiki_arousal_desc=wiki_batch['arousal_description']
+        wiki_va_desc.append(torch.cat([wiki_valence_desc,wiki_arousal_desc],dim=1))
+
     deam_train_va=[]
-    for train_batch in train_loader:
+    for train_batch in tqdm(train_loader):
         deam_train_valence=train_batch['valence_mean']
         deam_train_arousal=train_batch['arousal_mean']
         deam_train_va.append(torch.cat([train_batch['valence_mean'].unsqueeze(1),train_batch['arousal_mean'].unsqueeze(1)],dim=1))
 
-    wiki_va=torch.cat(wiki_va,dim=0)
+    wiki_va_emo=torch.cat(wiki_va_emo,dim=0)
+    wiki_va_desc=torch.cat(wiki_va_desc,dim=0)
     deam_train_va=torch.cat(deam_train_va,dim=0)
-    distance=pairwise_euclidean_distance(wiki_va,deam_train_va)
     
-    _,i2a_ids=torch.topk(-distance,k=TOP_K,dim=1)
-    _,a2i_ids=torch.topk(-distance.T,k=TOP_K,dim=1)
+    distance_emo=pairwise_euclidean_distance(wiki_va_emo,deam_train_va)
+    distance_desc=pairwise_euclidean_distance(wiki_va_desc,deam_train_va)
 
     return {'wikiart':wikiart_loader,
             'deam_train':train_loader,
             'deam_test':test_loader,
-            'img2audio_ids':i2a_ids,
-            'audio2img_ids':a2i_ids}
+            'va_dist_art2audio_emo':distance_emo,
+            'va_dist_art2audio_desc':distance_desc}
 
 
 if __name__ == "__main__":
+    torch.manual_seed(0)
     fire.Fire(get_all_loaders)

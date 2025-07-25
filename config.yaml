@@ -1,6 +1,6 @@
 General:
-    BATCH_SIZE: 64
-    TOP_K: 1
+    BATCH_SIZE: 16
+    TOP_K: 10
 
 WikiArt:
     TSV_PATH: "/data/data_fxu/WikiArt-Emotions/WikiArt-info.tsv"  # Path to your TSV file
@@ -15,3 +15,6 @@ DEAM:
 
 Lexicon:
     LEXICON_PATH: '/data/data_fxu/NRC-VAD-Lexicon-v2_1/NRC-VAD-Lexicon-v2_1.txt'
+
+AudioCLIP:
+    SEQ_LENGTH: 72_000
