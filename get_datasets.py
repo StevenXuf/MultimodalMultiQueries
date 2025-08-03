@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import yaml
 import fire
+import torchaudio
 
 from tqdm import tqdm
 from datasets import load_dataset
@@ -11,19 +12,20 @@ from io import BytesIO
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from torch.utils.data.dataloader import default_collate
+from torch.nn.utils.rnn import pad_sequence
 from torchvision.transforms.functional import to_tensor
 from torchmetrics.functional.pairwise import pairwise_euclidean_distance
 
 from text_to_vad import get_vad,get_lexicon
 
-def get_deam_loaders(threshold_valence=1.5,threshold_arousal=1.5,batch_size=64):
+def get_deam_loaders(threshold_valence=1.75,threshold_arousal=1.0,batch_size=64):
     ds = load_dataset("Rehead/DEAM_stripped_vocals")
     train,test=ds['train'],ds['test']
     filtered_train=filter_dataset(train,threshold_valence=threshold_valence,threshold_arousal=threshold_arousal)
     filtered_test=filter_dataset(test,threshold_valence=threshold_valence,threshold_arousal=threshold_arousal)
     return get_dataloader(filtered_train,deam_collate_fn,batch_size),get_dataloader(filtered_test,deam_collate_fn,batch_size)
 
-def filter_dataset(dataset,threshold_valence=1.5,threshold_arousal=1.5):
+def filter_dataset(dataset,threshold_valence=1.75,threshold_arousal=1.0):
     # Assuming `dataset` is your Hugging Face Dataset object
     # Filter the dataset
     filtered_dataset = dataset.filter(
@@ -33,15 +35,15 @@ def filter_dataset(dataset,threshold_valence=1.5,threshold_arousal=1.5):
     non_audio_cols = [col for col in filtered_dataset.column_names if col != 'audio']
     filtered_dataset.set_format(type='torch', columns=non_audio_cols, output_all_columns=True)
     
-    def normalize(example):
-        valence_min = filtered_dataset["valence_mean"].min()
-        valence_max = filtered_dataset["valence_mean"].max()
-        arousal_min = filtered_dataset["arousal_mean"].min()
-        arousal_max = filtered_dataset["arousal_mean"].max()
-        example["valence_mean"] = (example["valence_mean"] - valence_min) / (valence_max - valence_min)
-        example["arousal_mean"] = (example["arousal_mean"] - arousal_min) / (arousal_max - arousal_min)
-        return example
-    filtered_dataset=filtered_dataset.map(normalize)
+    # def normalize(example):
+    #     valence_min = filtered_dataset["valence_mean"].min()
+    #     valence_max = filtered_dataset["valence_mean"].max()
+    #     arousal_min = filtered_dataset["arousal_mean"].min()
+    #     arousal_max = filtered_dataset["arousal_mean"].max()
+    #     example["valence_mean"] = (example["valence_mean"] - valence_min) / (valence_max - valence_min)
+    #     example["arousal_mean"] = (example["arousal_mean"] - arousal_min) / (arousal_max - arousal_min)
+    #     return example
+    # filtered_dataset=filtered_dataset.map(normalize)
 
     return filtered_dataset
     
@@ -50,11 +52,14 @@ def filter_dataset(dataset,threshold_valence=1.5,threshold_arousal=1.5):
 def deam_collate_fn(batch):
     audio_data = [item.pop('audio') for item in batch]  # Extract audio
     collated_batch = default_collate(batch)  # Collate non-audio features
-
+    resample_transform = torchaudio.transforms.Resample(orig_freq=16000, new_freq=44100)
     # Convert audio arrays to tensors and add to batch
-    audio_arrays = [torch.as_tensor(audio['array']) for audio in audio_data]
-    collated_batch['audio'] = audio_arrays
+    audio_arrays = [torch.as_tensor(audio['array'],dtype=torch.float32) for audio in audio_data]
 
+    audio_arrays=[resample_transform(waveform) for waveform in audio_arrays]
+    audio_arrays=[audio/audio.abs().max() for audio in audio_arrays]
+
+    collated_batch['audio']=pad_sequence(audio_arrays, batch_first=True, padding_value=0.0)[:,:441000]
     return collated_batch
 
 def get_dataloader(dataset,collate_fn,batch_size=64):
@@ -70,12 +75,13 @@ def get_img_transform(IMAGE_SIZE=224):
     # Define image transformations
     transform = transforms.Compose([
         transforms.Resize((IMAGE_SIZE,IMAGE_SIZE)),
-        transforms.Lambda(lambda img: to_tensor(img)),  # Convert to tensor [0,1]
+        transforms.ToTensor(),  # Convert to tensor [0,1]
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     return transform
 
 
+#processing art dataset below
 class ArtworkDataset(Dataset):
     def __init__(self, df, transform=None):
         self.df = df.reset_index(drop=True)
@@ -103,27 +109,25 @@ class ArtworkDataset(Dataset):
 
         # Process metadata
         category = str(row['Category']) if pd.notna(row['Category']) else "Unknown"
-        title = str(row['Title']) if pd.notna(row['Title']) else ""
+        title = str(row['Title']) if pd.notna(row['Title']) else "Unknown"
         year = str(row['Year']) if pd.notna(row['Year']) else "Unknown"
         artist = str(row['Artist']) if pd.notna(row['Artist']) else "Unknown"
-        valence_emotion=torch.tensor([row['valence_emotion']])
-        arousal_emotion=torch.tensor([row['arousal_emotion']])
+        emotion_valence_image_only=torch.tensor([row['emotion_valence_image_only']])
+        emotion_arousal_image_only=torch.tensor([row['emotion_arousal_image_only']])
+        emotion_valence_title_only,emotion_arousal_title_only,emotion_valence_combined,emotion_arousal_combined=list(map(lambda x: torch.tensor([x]),[row['emotion_valence_title_only'],row['emotion_arousal_title_only'],row['emotion_valence_combined'],row['emotion_arousal_combined']]))
         valence_description=torch.tensor([row['valence_description']])
         arousal_description=torch.tensor([row['arousal_description']])
 
-        return category, img, title, year, artist, valence_emotion, arousal_emotion, valence_description, arousal_description
+        return category, img, title, year, artist, emotion_valence_image_only, emotion_arousal_image_only, emotion_valence_title_only,emotion_arousal_title_only,emotion_valence_combined,emotion_arousal_combined, valence_description, arousal_description
 
 # Custom collate function to handle text metadata
 def custom_art_collate(batch):
-    category, images, titles, years, artists, valence_emo, arousal_emo, valence_desc, arousal_desc= zip(*batch)
+    category, images, titles, years, artists, valence_emo_image, arousal_emo_image, valence_emo_title, arousal_emo_title,  valence_emo_combined, arousal_emo_combined, valence_desc, arousal_desc= zip(*batch)
 
     # Stack images into tensor
     images = torch.stack(images)
-    valence_emo=torch.stack(valence_emo)
-    arousal_emo=torch.stack(arousal_emo)
-
-    valence_desc=torch.stack(valence_desc)
-    arousal_desc=torch.stack(arousal_desc)
+    
+    valence_emo_image, arousal_emo_image, valence_emo_title, arousal_emo_title,  valence_emo_combined, arousal_emo_combined, valence_desc, arousal_desc=list(map(lambda x: torch.stack(x),[valence_emo_image, arousal_emo_image, valence_emo_title, arousal_emo_title,  valence_emo_combined, arousal_emo_combined, valence_desc, arousal_desc]))
     # Return metadata as lists
     return {
         "category": category,
@@ -131,11 +135,16 @@ def custom_art_collate(batch):
         "titles": titles,
         "years": years,
         "artists": artists,
-        "valence_emotion": valence_emo,
-        "arousal_emotion": arousal_emo,
+        "emotion_valence_image_only": valence_emo_image,
+        "emotion_arousal_image_only": arousal_emo_image,
+        "emotion_valence_title_only": valence_emo_title,
+        "emotion_arousal_title_only": arousal_emo_title,
+        "emotion_valence_combined": valence_emo_combined,
+        "emotion_arousal_combined": arousal_emo_combined,
         "valence_description":valence_desc,
         "arousal_description":arousal_desc
     }
+
 
 # Load and prepare data
 def create_wikiart_dataloader(df,custom_art_collate,BATCH_SIZE=64,IMAGE_SIZE=224):
@@ -144,19 +153,33 @@ def create_wikiart_dataloader(df,custom_art_collate,BATCH_SIZE=64,IMAGE_SIZE=224
 
     return get_dataloader(dataset,custom_art_collate,BATCH_SIZE)
 
-def get_image_title_emotion(emotion_file,lexicon):
+def get_image_and_title_emotion(emotion_file,lexicon):
     df=pd.read_csv(emotion_file,sep='\t')
     #cols_to_keep=[col for col in df.columns if 'Art (image+title)' in col]
     #df=df[cols_to_keep] 
-    df['valence_emotion'],df['arousal_emotion']=None,None
+    df['emotion_valence_image_only'],df['emotion_arousal_image_only']=None,None
+    df['emotion_valence_title_only'],df['emotion_arousal_title_only']=None,None
+    df['emotion_valence_combined'],df['emotion_arousal_combined']=None,None
     df['valence_description'],df['arousal_description']=None,None
 
-    for idx, row in df.iterrows():
-        emotions=[item.split(':')[1].strip() for item in list(row[9:69].index[row[9:69]== 1])]
-        va_emotion=get_vad(' '.join(emotions),lexicon)
-        df.at[idx,'valence_emotion'],df.at[idx,'arousal_emotion']=va_emotion['valence'],va_emotion['arousal']
+    image_cols = [col for col in df.columns if col.startswith("ImageOnly:")]
+    title_cols = [col for col in df.columns if col.startswith("TitleOnly:")]
+    image_and_title_cols=[col for col in df.columns if col.startswith("Art (image+title):")]
 
-        description=f"The painting {row['Title']} is, a {row['Category']}, created by {row['Artist']} in {row['Year']}"
+    for idx, row in df.iterrows():
+        image_emotions=[item.split(':')[1].strip() for item in list(row[image_cols].index[row[image_cols]== 1])]
+        va_emotion_image=get_vad(' '.join(image_emotions),lexicon)
+        df.at[idx,'emotion_valence_image_only'],df.at[idx,'emotion_arousal_image_only']=va_emotion_image['valence'],va_emotion_image['arousal']
+
+        title_emotions=[item.split(':')[1].strip() for item in list(row[title_cols].index[row[title_cols]== 1])]
+        va_emotion_title=get_vad(' '.join(title_emotions),lexicon)
+        df.at[idx,'emotion_valence_title_only'],df.at[idx,'emotion_arousal_title_only']=va_emotion_title['valence'],va_emotion_title['arousal']
+        
+        combined_emotions=[item.split(':')[1].strip() for item in list(row[image_and_title_cols].index[row[image_and_title_cols]== 1])]
+        va_emotion_combined=get_vad(' '.join(combined_emotions),lexicon)
+        df.at[idx,'emotion_valence_combined'],df.at[idx,'emotion_arousal_combined']=va_emotion_combined['valence'],va_emotion_combined['arousal']
+
+        description=f"The painting {row['Title']} is, an art of {row['Category']}, created by {row['Artist']} in {row['Year']}"
         va_description=get_vad(description,lexicon)
         df.at[idx,'valence_description'],df.at[idx,'arousal_description']=va_description['valence'],va_description['arousal']
     
@@ -192,49 +215,29 @@ def get_all_loaders(config='./config.yaml',BATCH_SIZE=None,TSV_PATH=None,IMAGE_S
         TOP_K=cfg['General']['TOP_K']
 
     lexicon=get_lexicon(LEXICON_PATH)
-    df_emo=get_image_title_emotion(EMOTION_PATH,lexicon)
+    df_emo=get_image_and_title_emotion(EMOTION_PATH,lexicon)
     df_main=pd.read_csv(TSV_PATH,sep='\t')
     df_main=df_main.dropna(subset=['Image URL'])
-    df=get_shared_info(df_main,df_emo) 
+    df=get_shared_info(df_main,df_emo)
 
     wikiart_loader = create_wikiart_dataloader(df,custom_art_collate,BATCH_SIZE,IMAGE_SIZE)
 
     train_loader,test_loader=get_deam_loaders(THRESHOLD_VALENCE,THRESHOLD_AROUSAL,BATCH_SIZE)
     
-    wiki_va_emo,wiki_va_desc=[],[]
-    for wiki_batch in tqdm(wikiart_loader):
-        category = wiki_batch['category']
-        images = wiki_batch["images"]        # Tensor shape: [B, 3, H, W]
-        titles = wiki_batch["titles"]        # List of titles
-        years = wiki_batch["years"]          # List of years
-        artists = wiki_batch["artists"]      # List of artists
-        
-        wiki_valence_emo=wiki_batch['valence_emotion']
-        wiki_arousal_emo=wiki_batch['arousal_emotion']
-        wiki_va_emo.append(torch.cat([wiki_valence_emo,wiki_arousal_emo],dim=1))
-        
-        wiki_valence_desc=wiki_batch['valence_description']
-        wiki_arousal_desc=wiki_batch['arousal_description']
-        wiki_va_desc.append(torch.cat([wiki_valence_desc,wiki_arousal_desc],dim=1))
-
-    deam_train_va=[]
-    for train_batch in tqdm(train_loader):
-        deam_train_valence=train_batch['valence_mean']
-        deam_train_arousal=train_batch['arousal_mean']
-        deam_train_va.append(torch.cat([train_batch['valence_mean'].unsqueeze(1),train_batch['arousal_mean'].unsqueeze(1)],dim=1))
-
-    wiki_va_emo=torch.cat(wiki_va_emo,dim=0)
-    wiki_va_desc=torch.cat(wiki_va_desc,dim=0)
-    deam_train_va=torch.cat(deam_train_va,dim=0)
-    
-    distance_emo=pairwise_euclidean_distance(wiki_va_emo,deam_train_va)
-    distance_desc=pairwise_euclidean_distance(wiki_va_desc,deam_train_va)
+    # wiki_va_emo_image,wiki_va_desc=[],[]
+    # for wiki_batch in tqdm(wikiart_loader):
+    #     category = wiki_batch['category']
+    #     images = wiki_batch["images"]        # Tensor shape: [B, 3, H, W]
+    #     titles = wiki_batch["titles"]        # List of titles
+    #     years = wiki_batch["years"]          # List of years
+    #     artists = wiki_batch["artists"]      # List of artists
 
     return {'wikiart':wikiart_loader,
             'deam_train':train_loader,
             'deam_test':test_loader,
-            'va_dist_art2audio_emo':distance_emo,
-            'va_dist_art2audio_desc':distance_desc}
+            # 'va_dist_art2audio_emo':distance_emo,
+            # 'va_dist_art2audio_desc':distance_desc
+            }
 
 
 if __name__ == "__main__":

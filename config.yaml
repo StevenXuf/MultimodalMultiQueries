@@ -1,5 +1,5 @@
 General:
-    BATCH_SIZE: 16
+    BATCH_SIZE: 64
     TOP_K: 10
 
 WikiArt:
@@ -9,9 +9,9 @@ WikiArt:
 
 DEAM:
     DATASET_NAME: 'Rehead/DEAM_stripped_vocals' 
-    THRESHOLD_VALENCE: 2.0
-    THRESHOLD_AROUSAL: 2.0
-    SAMPLING_RATE: 16_000
+    THRESHOLD_VALENCE: 1.75
+    THRESHOLD_AROUSAL: 1.0
+    SAMPLING_RATE: 44100
 
 Lexicon:
     LEXICON_PATH: '/data/data_fxu/NRC-VAD-Lexicon-v2_1/NRC-VAD-Lexicon-v2_1.txt'
