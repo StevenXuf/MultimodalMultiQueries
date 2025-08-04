@@ -1,7 +1,6 @@
 import torch
 import pandas as pd
 import requests
-import yaml
 import fire
 import torchaudio
 
@@ -17,6 +16,7 @@ from torchvision.transforms.functional import to_tensor
 from torchmetrics.functional.pairwise import pairwise_euclidean_distance
 
 from text_to_vad import get_vad,get_lexicon
+from configuration import get_default_config
 
 def get_deam_loaders(threshold_valence=1.75,threshold_arousal=1.0,batch_size=64):
     ds = load_dataset("Rehead/DEAM_stripped_vocals")
@@ -189,10 +189,6 @@ def get_shared_info(df1,df2):
     df_common = pd.merge(df1,df2,on=['ID', 'Category', 'Artist', 'Title', 'Year'],how='inner')
     return df_common
 
-def get_default_config(config_path):
-    with open(config_path,'r') as f:
-        return yaml.safe_load(f)
-
 def get_all_loaders(config='./config.yaml',BATCH_SIZE=None,TSV_PATH=None,IMAGE_SIZE=None,EMOTION_PATH=None, LEXICON_PATH=None,THRESHOLD_VALENCE=None,THRESHOLD_AROUSAL=None,TOP_K=None):
     
     cfg=get_default_config('./config.yaml')
@@ -223,14 +219,6 @@ def get_all_loaders(config='./config.yaml',BATCH_SIZE=None,TSV_PATH=None,IMAGE_S
     wikiart_loader = create_wikiart_dataloader(df,custom_art_collate,BATCH_SIZE,IMAGE_SIZE)
 
     train_loader,test_loader=get_deam_loaders(THRESHOLD_VALENCE,THRESHOLD_AROUSAL,BATCH_SIZE)
-    
-    # wiki_va_emo_image,wiki_va_desc=[],[]
-    # for wiki_batch in tqdm(wikiart_loader):
-    #     category = wiki_batch['category']
-    #     images = wiki_batch["images"]        # Tensor shape: [B, 3, H, W]
-    #     titles = wiki_batch["titles"]        # List of titles
-    #     years = wiki_batch["years"]          # List of years
-    #     artists = wiki_batch["artists"]      # List of artists
 
     return {'wikiart':wikiart_loader,
             'deam_train':train_loader,

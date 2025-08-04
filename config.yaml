@@ -1,6 +1,7 @@
 General:
     BATCH_SIZE: 64
     TOP_K: 10
+    NUM_WORKERS: 4
 
 WikiArt:
     TSV_PATH: "/data/data_fxu/WikiArt-Emotions/WikiArt-info.tsv"  # Path to your TSV file
@@ -12,6 +13,8 @@ DEAM:
     THRESHOLD_VALENCE: 1.75
     THRESHOLD_AROUSAL: 1.0
     SAMPLING_RATE: 44100
+    AUDIO_PATH: '/data/data_fxu/DEAM/audios'
+    ANNOTATION_PATH: '/data/data_fxu/DEAM/annotations'
 
 Lexicon:
     LEXICON_PATH: '/data/data_fxu/NRC-VAD-Lexicon-v2_1/NRC-VAD-Lexicon-v2_1.txt'

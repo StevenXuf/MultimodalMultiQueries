@@ -17,7 +17,9 @@ from torch.nn.utils.rnn import pad_sequence
 from torchmetrics.functional.pairwise import pairwise_cosine_similarity,pairwise_euclidean_distance
 from torchmetrics.retrieval import RetrievalRecall
 
-from get_datasets import get_all_loaders,get_default_config
+from get_datasets import get_all_loaders
+from configuration import get_default_config
+from deam import get_deam_loader
 
 sys.path.append(os.path.abspath("AudioCLIP"))
 from model import AudioCLIP
@@ -50,6 +52,7 @@ def extract_features(model,config_path='./config.yaml',SEQ_LENGTH=None,TOP_K=Non
 
     info=get_all_loaders()
     wikiart_loader, deam_train_loader, deam_test_loader = info['wikiart'], info['deam_train'], info['deam_test']
+    deam_train_loader = get_deam_loader(config_path=config_path)
     
     model.to(device)
 
@@ -99,7 +102,7 @@ def extract_features(model,config_path='./config.yaml',SEQ_LENGTH=None,TOP_K=Non
         image_features=F.normalize(torch.cat(image_features,dim=0),p=2,dim=1)
         text_features=F.normalize(torch.cat(text_features,dim=0),p=2,dim=1)
         
-    va_dist_art2audio=pairwise_euclidean_distance(wiki_va_emo_combined,deam_train_va)
+    va_dist_art2audio=pairwise_euclidean_distance(wiki_va_desc,deam_train_va)
     distance_desc=pairwise_euclidean_distance(wiki_va_desc,deam_train_va)
     
     i2a_sim=pairwise_cosine_similarity(image_features,audio_features)
