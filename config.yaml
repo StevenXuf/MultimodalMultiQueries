@@ -10,8 +10,8 @@ WikiArt:
 
 DEAM:
     DATASET_NAME: 'Rehead/DEAM_stripped_vocals' 
-    THRESHOLD_VALENCE: 1.75
-    THRESHOLD_AROUSAL: 1.0
+    THRESHOLD_VALENCE: 100.0
+    THRESHOLD_AROUSAL: 100.0
     SAMPLING_RATE: 44100
     AUDIO_PATH: '/data/data_fxu/DEAM/audios'
     ANNOTATION_PATH: '/data/data_fxu/DEAM/annotations'
