@@ -1,16 +1,15 @@
 import torch
 import os
 import sys
-import torch.nn as nn
 import torchaudio
 import requests
 import io
 
+import torch.nn.functional as F
+
 from PIL import Image
 from tqdm import tqdm
 from datasets import load_dataset,Dataset
-from torchvision import models,datasets
-from transformers import AutoModel, AutoTokenizer
 from torch.utils.data import DataLoader
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 from torch.nn.utils.rnn import pad_sequence
@@ -170,20 +169,17 @@ def get_triplets(dataset_name,anno_name,new_sample_rate=44100):
             results['caption'].append(loc_narr.caption)
 
             url=loc_narr.voice_recording_url
-            print(f'Processing audio from URL: {url}')
             response = requests.get(url)
-            audio_bytes = io.BytesIO(response.content)
-            print(f'Audio size: {len(audio_bytes.getvalue())} bytes')
-            audio_bytes.seek(0)  # Reset the stream position to the beginning
-            results['audio_byte'].append(audio_bytes)
+            raw_bytes = response.content
+            audio_bytes = io.BytesIO(raw_bytes)
+            results['audio_byte'].append(raw_bytes)
 
             waveform, sample_rate = torchaudio.load(audio_bytes)
-            print(f'Original waveform shape: {waveform.shape}, Sample rate: {sample_rate}')
             if waveform.shape[0] > 1:
                 waveform = waveform.mean(dim=0, keepdim=True)
             if sample_rate!=new_sample_rate:
                 resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=new_sample_rate)
-                waveform = resampler(waveform)[:,:new_sample_rate*10]  # Keep only the first 5 seconds
+                waveform = resampler(waveform)[:,:new_sample_rate*15]  # Keep only the first 10 seconds
                 waveform=waveform/waveform.abs().max()
             results['audio'].append(waveform)
         
@@ -248,8 +244,8 @@ def compute_metrics(feat1,feat2,top_k=10):
     indexes = torch.arange(preds.size(0), dtype=torch.long).unsqueeze(1).expand(*preds.size()).to(feat1.device)
     recall=compute_recall(preds,targets,indexes)
     precision=compute_precision(preds,targets,indexes)
-    print(f'\nRecall@{top_k}: {recall:.2f}')
-    print(f'\nPrecision@{top_k}: {precision:.2f}')
+    print(f'Recall@{top_k}: {recall:.2f}')
+    print(f'Precision@{top_k}: {precision:.2f}')
 
 if __name__=='__main__':
     triplet_dataset=get_triplets('flickr30k','flickr30k_test',new_sample_rate=16000)
@@ -271,28 +267,20 @@ if __name__=='__main__':
 
     # image_features,text_features,audio_features=get_features(dataloader,model,device)
 
-    # # image-to-audio
-    # compute_metrics(image_features,audio_features)
-    # # text-to-audio
-    # compute_metrics(text_features,audio_features)
-    # #image+text-to-audio
-    # compute_metrics(image_features+text_features,audio_features)
-    # #image*text-to-audio
-    # compute_metrics(image_features*text_features,audio_features)
-
-    # compute_metrics(image_features,text_features)
-
-    #
     #dataloader=Flickr30K().get_loaders()
     with torch.no_grad():
         model.eval()
         print(f'Computing features using {dataloader.__class__.__name__}...')
+        all_image_features = []
+        all_text_features = []
+        all_audio_features = []
         for batch in tqdm(dataloader):
             image=batch['image'].to(device)
             if model_name=='AudioCLIP':
                 text=[[truncate_to_desired_tokens(cap)[0]] for cap in batch['caption']]
                 ((_, image_features, _), _), _ = model(image=image)
                 ((_, _, text_features), _), _ = model(text=text)
+                ((audio_features, _, _), _), _ = model(audio=batch['audio'].to(device))
             elif model_name=='ImageBind':
                 text=batch['caption']
                 audio_byte = batch['audio_byte']
@@ -302,19 +290,21 @@ if __name__=='__main__':
                     ModalityType.AUDIO: data.load_and_transform_audio_data(audio_byte, device),
                     }
                 embeddings = model(inputs)
-                print(
-                    "Vision x Text: ",
-                    torch.softmax(embeddings[ModalityType.VISION] @ embeddings[ModalityType.TEXT].T, dim=-1),
-                )
-                print(
-                    "Audio x Text: ",
-                    torch.softmax(embeddings[ModalityType.AUDIO] @ embeddings[ModalityType.TEXT].T, dim=-1),
-                )
-                print("Vision x Audio: ",
-                    torch.softmax(embeddings[ModalityType.VISION] @ embeddings[ModalityType.AUDIO].T, dim=-1),
-                )
-
-            compute_metrics(image_features, text_features, top_k=top_k)
+                image_features = F.normalize(embeddings[ModalityType.VISION])
+                text_features = F.normalize(embeddings[ModalityType.TEXT])
+                audio_features = F.normalize(embeddings[ModalityType.AUDIO])
+            all_image_features.append(image_features)
+            all_text_features.append(text_features)
+            all_audio_features.append(audio_features)
+        image_features = torch.cat(all_image_features, dim=0)
+        text_features = torch.cat(all_text_features, dim=0)
+        audio_features = torch.cat(all_audio_features, dim=0)
+        compute_metrics(image_features, text_features, top_k=top_k)
+        compute_metrics(text_features, image_features, top_k=top_k)
+        compute_metrics(image_features, audio_features, top_k=top_k)
+        compute_metrics(text_features, audio_features, top_k=top_k)
+        compute_metrics(F.normalize(image_features + text_features), audio_features, top_k=top_k)
+        compute_metrics(F.normalize(image_features * text_features), audio_features, top_k=top_k)
 
     #######TODO:
     # also try to use clip model and use only audio encoder from AudioCLIP

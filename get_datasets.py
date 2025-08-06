@@ -34,16 +34,6 @@ def filter_dataset(dataset,threshold_valence=1.75,threshold_arousal=1.0):
     # Set format for non-audio columns to PyTorch tensors
     non_audio_cols = [col for col in filtered_dataset.column_names if col != 'audio']
     filtered_dataset.set_format(type='torch', columns=non_audio_cols, output_all_columns=True)
-    
-    # def normalize(example):
-    #     valence_min = filtered_dataset["valence_mean"].min()
-    #     valence_max = filtered_dataset["valence_mean"].max()
-    #     arousal_min = filtered_dataset["arousal_mean"].min()
-    #     arousal_max = filtered_dataset["arousal_mean"].max()
-    #     example["valence_mean"] = (example["valence_mean"] - valence_min) / (valence_max - valence_min)
-    #     example["arousal_mean"] = (example["arousal_mean"] - arousal_min) / (arousal_max - arousal_min)
-    #     return example
-    # filtered_dataset=filtered_dataset.map(normalize)
 
     return filtered_dataset
     
@@ -59,7 +49,7 @@ def deam_collate_fn(batch):
     audio_arrays=[resample_transform(waveform) for waveform in audio_arrays]
     audio_arrays=[audio/audio.abs().max() for audio in audio_arrays]
 
-    collated_batch['audio']=pad_sequence(audio_arrays, batch_first=True, padding_value=0.0)[:,:441000]
+    collated_batch['audio']=pad_sequence(audio_arrays, batch_first=True, padding_value=0.0)[:,:44100*15]  # Keep only the first 5 seconds
     return collated_batch
 
 def get_dataloader(dataset,collate_fn,batch_size=64):
@@ -222,9 +212,7 @@ def get_all_loaders(config='./config.yaml',BATCH_SIZE=None,TSV_PATH=None,IMAGE_S
 
     return {'wikiart':wikiart_loader,
             'deam_train':train_loader,
-            'deam_test':test_loader,
-            # 'va_dist_art2audio_emo':distance_emo,
-            # 'va_dist_art2audio_desc':distance_desc
+            'deam_test':test_loader
             }
 
 

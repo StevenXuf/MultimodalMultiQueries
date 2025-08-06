@@ -1,5 +1,5 @@
 General:
-    BATCH_SIZE: 64
+    BATCH_SIZE: 128
     TOP_K: 10
     NUM_WORKERS: 4
     DEVICE: 1
