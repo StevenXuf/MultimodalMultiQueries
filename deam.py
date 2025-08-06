@@ -37,8 +37,7 @@ class AudioDataset(Dataset):
         
         # Resample if needed
         if sample_rate != self.target_sample_rate:
-            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate,
-                                                       new_freq=self.target_sample_rate)
+            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate,new_freq=self.target_sample_rate)
             waveform = resampler(waveform)
 
         waveform = waveform/waveform.abs().max()  # Normalize waveform
@@ -92,5 +91,5 @@ def get_deam_loader(config_path='./config.yaml'):
 if __name__ == "__main__":
     dataloader=get_deam_loader()
     for batch in dataloader:
-        padded_waveforms, valence_mean, arousal_mean = batch
+        padded_waveforms, valence_mean, arousal_mean = batch['audio'], batch['valence_mean'], batch['arousal_mean']
         print(f"Padded waveforms shape: {padded_waveforms.shape}, valence shape: {valence_mean.shape}, arousal shape: {arousal_mean.shape}")

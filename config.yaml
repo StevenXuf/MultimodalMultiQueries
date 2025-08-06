@@ -2,6 +2,7 @@ General:
     BATCH_SIZE: 64
     TOP_K: 10
     NUM_WORKERS: 4
+    DEVICE: 1
 
 WikiArt:
     TSV_PATH: "/data/data_fxu/WikiArt-Emotions/WikiArt-info.tsv"  # Path to your TSV file
@@ -20,4 +21,4 @@ Lexicon:
     LEXICON_PATH: '/data/data_fxu/NRC-VAD-Lexicon-v2_1/NRC-VAD-Lexicon-v2_1.txt'
 
 AudioCLIP:
-    SEQ_LENGTH: 72_000
+    SEQ_LENGTH: 441000
