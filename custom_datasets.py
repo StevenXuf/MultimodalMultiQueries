@@ -15,16 +15,17 @@ from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normal
 from torch.nn.utils.rnn import pad_sequence
 from torchmetrics.functional.pairwise import pairwise_cosine_similarity
 from torchmetrics.retrieval import RetrievalPrecision,RetrievalRecall
+from transformers import AutoProcessor, ClapModel, AutoTokenizer,AutoFeatureExtractor
 
 from token_truncation import truncate_to_desired_tokens
 
 sys.path.append(os.path.abspath("AudioCLIP"))
 from model import AudioCLIP
 
-sys.path.append(os.path.abspath('ImageBind'))
-from imagebind import data
-from imagebind.models import imagebind_model
-from imagebind.models.imagebind_model import ModalityType
+# sys.path.append(os.path.abspath('ImageBind'))
+# from imagebind import data
+# from imagebind.models import imagebind_model
+# from imagebind.models.imagebind_model import ModalityType
 
 sys.path.append(os.path.abspath('localized-narratives'))
 import localized_narratives
@@ -179,7 +180,7 @@ def get_triplets(dataset_name,anno_name,new_sample_rate=44100):
                 waveform = waveform.mean(dim=0, keepdim=True)
             if sample_rate!=new_sample_rate:
                 resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=new_sample_rate)
-                waveform = resampler(waveform)[:,:new_sample_rate*15]  # Keep only the first 10 seconds
+                waveform = resampler(waveform)[:,:new_sample_rate*15]  # Keep only the first 15 seconds
                 waveform=waveform/waveform.abs().max()
             results['audio'].append(waveform)
         
@@ -248,20 +249,24 @@ def compute_metrics(feat1,feat2,top_k=10):
     print(f'Precision@{top_k}: {precision:.2f}')
 
 if __name__=='__main__':
-    triplet_dataset=get_triplets('flickr30k','flickr30k_test',new_sample_rate=16000)
+    triplet_dataset=get_triplets('flickr30k','flickr30k_test',new_sample_rate=48000)
     device=torch.device('cuda:1')
-    batch_size=64
+    batch_size=1
     top_k=10
-    model_name='ImageBind'  # Change to 'AudioCLIP' if you want to use AudioCLIP
-
+    model_name='CLAP'  # Change to 'AudioCLIP' if you want to use AudioCLIP
+    
     if model_name=='AudioCLIP':
         MODEL_FILENAME = 'AudioCLIP-Full-Training.pt'
         model = AudioCLIP(pretrained=f'./AudioCLIP/assets/{MODEL_FILENAME}').to(device)
     elif model_name=='ImageBind':
-        model = imagebind_model.imagebind_huge(pretrained=True)
+        model = imagebind_model.imagebind_huge(pretrained=True).to(device)
+    elif model_name=='CLAP':
+        processor = AutoProcessor.from_pretrained("laion/clap-htsat-unfused")
+        tokenizer = AutoTokenizer.from_pretrained("laion/clap-htsat-unfused")
+        feature_extractor = AutoFeatureExtractor.from_pretrained("laion/clap-htsat-unfused")
+        model = ClapModel.from_pretrained("laion/clap-htsat-unfused").to(device)
 
     model.eval()
-    model.to(device)
      
     dataloader=get_triplet_dataloader(triplet_dataset,batch_size,collate_fn)
 
@@ -269,7 +274,6 @@ if __name__=='__main__':
 
     #dataloader=Flickr30K().get_loaders()
     with torch.no_grad():
-        model.eval()
         print(f'Computing features using {dataloader.__class__.__name__}...')
         all_image_features = []
         all_text_features = []
@@ -293,18 +297,27 @@ if __name__=='__main__':
                 image_features = F.normalize(embeddings[ModalityType.VISION])
                 text_features = F.normalize(embeddings[ModalityType.TEXT])
                 audio_features = F.normalize(embeddings[ModalityType.AUDIO])
-            all_image_features.append(image_features)
+            elif model_name=='CLAP':
+                txt_inputs = tokenizer(text=batch['caption'], return_tensors="pt", padding=True).to(device)
+                text_features = model.get_text_features(**txt_inputs)
+                audio_inputs = feature_extractor(batch['audio'], return_tensors="pt", sampling_rate=48000).to(device)
+                audio_features = model.get_audio_features(**audio_inputs)
+                # image_features = outputs.image_embeds
+                # text_features = outputs.text_embeds
+                # audio_features = outputs.audio_embeds
+            
+            # all_image_features.append(image_features)
             all_text_features.append(text_features)
             all_audio_features.append(audio_features)
-        image_features = torch.cat(all_image_features, dim=0)
+        # image_features = torch.cat(all_image_features, dim=0)
         text_features = torch.cat(all_text_features, dim=0)
         audio_features = torch.cat(all_audio_features, dim=0)
-        compute_metrics(image_features, text_features, top_k=top_k)
-        compute_metrics(text_features, image_features, top_k=top_k)
-        compute_metrics(image_features, audio_features, top_k=top_k)
+        # compute_metrics(image_features, text_features, top_k=top_k)
+        # compute_metrics(text_features, image_features, top_k=top_k)
+        # compute_metrics(image_features, audio_features, top_k=top_k)
         compute_metrics(text_features, audio_features, top_k=top_k)
-        compute_metrics(F.normalize(image_features + text_features), audio_features, top_k=top_k)
-        compute_metrics(F.normalize(image_features * text_features), audio_features, top_k=top_k)
+        # compute_metrics(F.normalize(image_features + text_features), audio_features, top_k=top_k)
+        # compute_metrics(F.normalize(image_features * text_features), audio_features, top_k=top_k)
 
     #######TODO:
     # also try to use clip model and use only audio encoder from AudioCLIP
